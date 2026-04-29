@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -26,8 +26,10 @@ export default function Home() {
     ]).finally(() => setLoading(false));
   }, []);
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const executeSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
       const data = await api.getMedicines();
       setMedicines(data.data || []);
       setSelectedCategory(null);
@@ -35,12 +37,23 @@ export default function Home() {
     }
     setLoading(true);
     try {
-      const data = await api.searchMedicines(searchQuery);
+      const data = await api.searchMedicines(query);
       setMedicines(data.data || []);
       setSelectedCategory(null);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const handleSearchInput = (value: string) => {
+    setSearchQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => executeSearch(value), 400);
+  };
+
+  const handleSearch = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    executeSearch(searchQuery);
   };
 
   const handleCategoryClick = async (slug: string) => {
@@ -108,7 +121,7 @@ export default function Home() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={e => handleSearchInput(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
                 placeholder="Tìm thuốc theo tên, thành phần..."
                 className="flex-1 px-6 py-4 text-sm focus:outline-none"

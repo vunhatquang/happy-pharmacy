@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"happy-pharmacy-api/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // ============================================================
@@ -343,7 +345,10 @@ func AdminReviewPrescription(c *gin.Context) {
 
 func AdminGetInventory(c *gin.Context) {
 	var medicines []models.Medicine
-	database.DB.Preload("Category").Where("is_active = ?", true).Order("stock_qty ASC").Find(&medicines)
+	if err := database.DB.Preload("Category").Where("is_active = ?", true).Order("stock_qty ASC").Find(&medicines).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load inventory"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": medicines})
 }
 
@@ -352,15 +357,11 @@ type AdminUpdateStockRequest struct {
 	Reason    string `json:"reason" binding:"required"`     // 'restock' | 'expired' | 'damaged' | 'adjustment'
 }
 
+// AdminUpdateStock adjusts stock using an atomic SQL expression inside a transaction.
+// This prevents two admins from losing each other's updates.
 func AdminUpdateStock(c *gin.Context) {
 	id := c.Param("id")
 	adminID := c.GetString("user_id")
-
-	var medicine models.Medicine
-	if err := database.DB.First(&medicine, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Medicine not found"})
-		return
-	}
 
 	var req AdminUpdateStockRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -368,23 +369,63 @@ func AdminUpdateStock(c *gin.Context) {
 		return
 	}
 
-	newQty := medicine.StockQty + req.ChangeQty
-	if newQty < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Stock cannot go below 0"})
+	var newQty int
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		// Atomically update stock with a floor check
+		var result *gorm.DB
+		if req.ChangeQty < 0 {
+			// For removals, ensure stock won't go negative
+			result = tx.Model(&models.Medicine{}).
+				Where("id = ? AND stock_qty >= ?", id, -req.ChangeQty).
+				Update("stock_qty", gorm.Expr("stock_qty + ?", req.ChangeQty))
+		} else {
+			result = tx.Model(&models.Medicine{}).
+				Where("id = ?", id).
+				Update("stock_qty", gorm.Expr("stock_qty + ?", req.ChangeQty))
+		}
+
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// Either medicine not found, or insufficient stock for removal
+			var exists models.Medicine
+			if tx.First(&exists, "id = ?", id).Error != nil {
+				return fmt.Errorf("medicine not found")
+			}
+			return fmt.Errorf("stock cannot go below 0 (current: %d, change: %d)", exists.StockQty, req.ChangeQty)
+		}
+
+		// Log the change in the same transaction
+		invLog := models.InventoryLog{
+			MedicineID:  id,
+			ChangeQty:   req.ChangeQty,
+			Reason:      req.Reason,
+			PerformedBy: adminID,
+		}
+		if err := tx.Create(&invLog).Error; err != nil {
+			return fmt.Errorf("failed to log change: %w", err)
+		}
+
+		// Read back the new quantity
+		var medicine models.Medicine
+		if err := tx.First(&medicine, "id = ?", id).Error; err != nil {
+			return err
+		}
+		newQty = medicine.StockQty
+		return nil
+	})
+
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "medicine not found" {
+			status = http.StatusNotFound
+		} else if len(err.Error()) > 5 && err.Error()[:5] == "stock" {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-
-	medicine.StockQty = newQty
-	database.DB.Save(&medicine)
-
-	// Log the change
-	log := models.InventoryLog{
-		MedicineID:  id,
-		ChangeQty:   req.ChangeQty,
-		Reason:      req.Reason,
-		PerformedBy: adminID,
-	}
-	database.DB.Create(&log)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Stock updated",

@@ -1,0 +1,29 @@
+# Environment variables
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go backend
+back-end/bin/
+back-end/tmp/
+back-end/uploads/
+
+# Frontend (covered by its own .gitignore, but just in case)
+front-end/pharmacy-ui/node_modules/
+front-end/pharmacy-ui/.next/
+front-end/pharmacy-ui/out/
+
+# Docker volumes
+pgdata/
+
+# Logs
+*.log

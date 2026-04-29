@@ -42,6 +42,7 @@ export default function ProfilePage() {
   };
 
   const handleDeleteAddress = async (id: string) => {
+    if (!confirm("Bạn có chắc muốn xóa địa chỉ này?")) return;
     await api.deleteAddress(id);
     setAddresses(prev => prev.filter(a => a.id !== id));
   };

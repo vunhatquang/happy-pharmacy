@@ -55,7 +55,6 @@ export default function Login() {
 
             <div>
               <label className="block text-sm font-medium text-slate-700">Mật khẩu</label>
-              <p className="mt-1 text-xs text-slate-500">Test admin: <code className="bg-slate-100 px-1 rounded">admin123</code></p>
               <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
                 className="mt-2 appearance-none block w-full px-4 py-3 border border-slate-300 rounded-xl shadow-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all sm:text-sm"
                 placeholder="••••••••" />

@@ -51,7 +51,7 @@ export default function CartPage() {
                     </button>
                   </div>
                 ))}
-                <button onClick={clearCart} className="text-sm text-red-500 hover:text-red-600 font-medium">Xóa giỏ hàng</button>
+                <button onClick={() => { if (confirm("Bạn có chắc muốn xóa toàn bộ giỏ hàng?")) clearCart(); }} className="text-sm text-red-500 hover:text-red-600 font-medium">Xóa giỏ hàng</button>
               </div>
 
               {/* Order Summary */}
