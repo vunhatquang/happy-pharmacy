@@ -1,0 +1,6 @@
+bin/
+tmp/
+uploads/
+*.log
+.env
+test_api.sh

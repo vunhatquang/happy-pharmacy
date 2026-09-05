@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type Prescription } from "../../../lib/api";
 import AdminLayout from "../../../components/AdminLayout";
 
@@ -9,14 +9,26 @@ export default function AdminPrescriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("pending");
 
-  useEffect(() => {
-    loadPrescriptions("pending");
+  // Fetches without touching `loading` — the initial state is already true, so
+  // the mount effect has no state to set synchronously.
+  const fetchPrescriptions = useCallback(async (status?: string) => {
+    try {
+      const d = await api.adminGetPrescriptions(status);
+      setPrescriptions(d.data || []);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const loadPrescriptions = (status?: string) => {
+  // Manual reloads (filter clicks, post-review refresh) show the spinner again.
+  const loadPrescriptions = useCallback((status?: string) => {
     setLoading(true);
-    api.adminGetPrescriptions(status).then(d => setPrescriptions(d.data || [])).finally(() => setLoading(false));
-  };
+    fetchPrescriptions(status);
+  }, [fetchPrescriptions]);
+
+  useEffect(() => {
+    fetchPrescriptions("pending");
+  }, [fetchPrescriptions]);
 
   const handleReview = async (id: string, status: 'approved' | 'rejected') => {
     const message = status === 'rejected' ? "Bạn có chắc muốn từ chối đơn thuốc này?" : "Xác nhận phê duyệt đơn thuốc này?";
@@ -70,7 +82,7 @@ export default function AdminPrescriptionsPage() {
 
                 {rx.image_url && (
                   <div className="mb-4">
-                    <a href={`http://localhost:8080${rx.image_url}`} target="_blank" rel="noopener noreferrer" className="text-sm text-emerald-600 hover:underline">📎 Xem ảnh đơn thuốc</a>
+                    <a href={`${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:8080'}${rx.image_url}`} target="_blank" rel="noopener noreferrer" className="text-sm text-emerald-600 hover:underline">📎 Xem ảnh đơn thuốc</a>
                   </div>
                 )}
 

@@ -6,7 +6,7 @@ import { useAuth } from "../lib/auth-context";
 import { useCart } from "../lib/cart-context";
 
 export default function Navbar() {
-  const { user, logout, isAdmin, isLoggedIn } = useAuth();
+  const { user, logout, isAdmin, isPharmacist, isLoggedIn } = useAuth();
   const { count } = useCart();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -26,6 +26,7 @@ export default function Navbar() {
           <div className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-600">
             <Link href="/" className="hover:text-emerald-500 transition-colors">Trang chủ</Link>
             <Link href="/prescriptions" className="hover:text-emerald-500 transition-colors">Đơn thuốc</Link>
+            <Link href="/consultation" className="hover:text-emerald-500 transition-colors">Tư vấn dược sĩ</Link>
             {isLoggedIn && <Link href="/orders" className="hover:text-emerald-500 transition-colors">Đơn hàng</Link>}
             {isLoggedIn && <Link href="/subscriptions" className="hover:text-emerald-500 transition-colors">Đăng ký định kỳ</Link>}
           </div>
@@ -43,6 +44,12 @@ export default function Navbar() {
                 </span>
               )}
             </Link>
+
+            {isPharmacist && (
+              <Link href="/pharmacist" className="hidden sm:inline-flex px-4 py-2 rounded-full bg-teal-500 text-white text-sm font-medium hover:bg-teal-600 transition-colors shadow-sm">
+                Cổng dược sĩ
+              </Link>
+            )}
 
             {isAdmin && (
               <Link href="/admin" className="hidden sm:inline-flex px-4 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium hover:bg-emerald-600 transition-colors shadow-sm">
@@ -85,9 +92,11 @@ export default function Navbar() {
           <div className="md:hidden pb-4 border-t border-slate-100 mt-2 pt-4 space-y-3 animate-in slide-in-from-top-5 duration-200">
             <Link href="/" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Trang chủ</Link>
             <Link href="/prescriptions" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Đơn thuốc</Link>
+            <Link href="/consultation" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Tư vấn dược sĩ</Link>
             {isLoggedIn && <Link href="/orders" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Đơn hàng</Link>}
             {isLoggedIn && <Link href="/subscriptions" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Đăng ký định kỳ</Link>}
             {isLoggedIn && <Link href="/profile" onClick={() => setMobileOpen(false)} className="block text-slate-600 hover:text-emerald-500 font-medium">Tài khoản</Link>}
+            {isPharmacist && <Link href="/pharmacist" onClick={() => setMobileOpen(false)} className="block text-teal-600 font-semibold">Cổng dược sĩ</Link>}
             {isAdmin && <Link href="/admin" onClick={() => setMobileOpen(false)} className="block text-emerald-600 font-semibold">Admin Dashboard</Link>}
           </div>
         )}

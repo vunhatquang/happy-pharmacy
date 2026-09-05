@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"happy-pharmacy-api/internal/database"
 	"happy-pharmacy-api/internal/handlers"
@@ -21,6 +26,11 @@ func main() {
 	// Initialize Database
 	database.Connect()
 
+	// Set Gin mode from env
+	if mode := os.Getenv("GIN_MODE"); mode != "" {
+		gin.SetMode(mode)
+	}
+
 	// Initialize Router
 	r := gin.Default()
 
@@ -30,9 +40,18 @@ func main() {
 	// Serve uploaded files (prescriptions, etc.)
 	r.Static("/uploads", "./uploads")
 
-	// Health Check
+	// Health Check — verifies database connectivity
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
+		sqlDB, err := database.DB.DB()
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "Unhealthy", "error": "database unavailable"})
+			return
+		}
+		if err := sqlDB.Ping(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "Unhealthy", "error": "database unreachable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
 			"status":  "Healthy",
 			"message": "Happy Pharmacy API is running!",
 		})
@@ -43,9 +62,10 @@ func main() {
 	// ========================================
 	api := r.Group("/api")
 	{
-		// Auth
-		api.POST("/register", handlers.RegisterUser)
-		api.POST("/login", handlers.LoginUser)
+		// Auth (rate limited: 10 requests per minute per IP)
+		authLimiter := middleware.RateLimit(10, time.Minute)
+		api.POST("/register", authLimiter, handlers.RegisterUser)
+		api.POST("/login", authLimiter, handlers.LoginUser)
 
 		// Browse medicines (public)
 		api.GET("/medicines", handlers.GetMedicines)
@@ -53,8 +73,9 @@ func main() {
 		api.GET("/medicines/search", handlers.SearchMedicines)
 		api.GET("/categories", handlers.GetCategories)
 
-		// AI (public)
-		api.POST("/ai/chat", handlers.AskClaudeAssistant)
+		// AI (rate limited: 5 requests per minute per IP)
+		aiLimiter := middleware.RateLimit(5, time.Minute)
+		api.POST("/ai/chat", aiLimiter, handlers.AskClaudeAssistant)
 	}
 
 	// ========================================
@@ -127,11 +148,46 @@ func main() {
 		admin.GET("/inventory/:id/logs", handlers.AdminGetInventoryLogs)
 	}
 
-	// Run Server
+	// Run Server with graceful shutdown
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Server starting on port %s", port)
-	r.Run(":" + port)
+
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		log.Printf("Server starting on port %s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	// Give active connections 10 seconds to finish
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	// Close database connection
+	if sqlDB, err := database.DB.DB(); err == nil {
+		sqlDB.Close()
+	}
+
+	log.Println("Server exited gracefully")
 }

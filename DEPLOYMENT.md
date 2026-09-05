@@ -1,24 +1,43 @@
-# Happy Pharmacy — Deployment Guide
+# Happy Pharmacy — Deployment & CI/CD Guide
 
-This guide covers deploying the Happy Pharmacy platform to the cloud, starting with the **most budget-friendly approach** and scaling up as needed.
+This guide covers deploying Happy Pharmacy to the cloud with a fully automated CI/CD pipeline.
 
 ---
 
 ## Table of Contents
 
-- [Option 1: Vercel + Railway (Recommended — Cheapest)](#option-1-vercel--railway-recommended--cheapest)
+- [Architecture Overview](#architecture-overview)
+- [Option 1: Vercel + Railway (Recommended)](#option-1-vercel--railway-recommended)
 - [Option 2: Vercel + Fly.io (Alternative)](#option-2-vercel--flyio-alternative)
 - [Option 3: Single VPS (Full Control)](#option-3-single-vps-full-control)
 - [Environment Variables Reference](#environment-variables-reference)
-- [Pre-Deployment Checklist](#pre-deployment-checklist)
-- [CI/CD with GitHub Actions](#cicd-with-github-actions)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Pre-Deployment Security Checklist](#pre-deployment-security-checklist)
 - [Post-Deployment Verification](#post-deployment-verification)
 - [Monitoring & Maintenance](#monitoring--maintenance)
 - [Scaling Up](#scaling-up)
 
 ---
 
-## Option 1: Vercel + Railway (Recommended — Cheapest)
+## Architecture Overview
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Vercel CDN │────▶│  Go API      │────▶│  PostgreSQL   │
+│  (Next.js)   │     │  (Gin)       │     │  (Database)   │
+│  Front-end   │     │  Back-end    │     │               │
+└──────────────┘     └──────────────┘     └──────────────┘
+        ▲                    ▲
+        │                    │
+   ┌────┴────────────────────┴────┐
+   │    GitHub Actions CI/CD      │
+   │  lint → build → test → deploy│
+   └──────────────────────────────┘
+```
+
+---
+
+## Option 1: Vercel + Railway (Recommended)
 
 **Estimated cost: $0–5/month for demo, ~$10/month for light production**
 
@@ -31,9 +50,8 @@ This guide covers deploying the Happy Pharmacy platform to the cloud, starting w
 ### Step 1: Push Code to GitHub
 
 ```bash
-git init
 git add .
-git commit -m "Initial deployment"
+git commit -m "Prepare for deployment"
 git remote add origin https://github.com/YOUR_USERNAME/happy-pharmacy.git
 git push -u origin main
 ```
@@ -43,11 +61,7 @@ git push -u origin main
 1. Go to [railway.app](https://railway.app/) and sign in with GitHub.
 2. Click **New Project** > **Provision PostgreSQL**.
 3. Once created, click on the PostgreSQL service > **Variables** tab.
-4. Copy the `DATABASE_URL` — it looks like:
-   ```
-   postgresql://postgres:PASSWORD@HOST:PORT/railway
-   ```
-5. Also note the individual values: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`.
+4. Copy the individual values: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`.
 
 ### Step 3: Deploy the Backend on Railway
 
@@ -57,28 +71,9 @@ git push -u origin main
    - **Root Directory:** `back-end`
    - **Build Command:** `go build -o bin/api cmd/api/main.go`
    - **Start Command:** `./bin/api`
-4. In **Variables**, add:
-
-   ```
-   PORT=8080
-   DB_HOST=<PGHOST from step 2>
-   DB_PORT=<PGPORT from step 2>
-   DB_USER=<PGUSER from step 2>
-   DB_PASSWORD=<PGPASSWORD from step 2>
-   DB_NAME=<PGDATABASE from step 2>
-   JWT_SECRET=<generate a random 64-char string>
-   GIN_MODE=release
-   ```
-
-   To generate a JWT secret:
-   ```bash
-   openssl rand -hex 32
-   ```
-
-5. Click **Deploy**. Railway will build and start the Go binary.
-6. Once deployed, go to **Settings** > **Networking** > **Generate Domain**.
-7. Note your backend URL (e.g., `https://happy-pharmacy-api-production.up.railway.app`).
-8. Verify: visit `https://YOUR_BACKEND_URL/health` — should return `{"status":"Healthy"}`.
+4. In **Variables**, add all variables from the [Environment Variables Reference](#environment-variables-reference).
+5. Click **Deploy**. Go to **Settings** > **Networking** > **Generate Domain**.
+6. Verify: visit `https://YOUR_BACKEND_URL/health` — should return `{"status":"Healthy"}`.
 
 ### Step 4: Deploy the Frontend on Vercel
 
@@ -87,33 +82,21 @@ git push -u origin main
 3. Configure:
    - **Root Directory:** `front-end/pharmacy-ui`
    - **Framework Preset:** Next.js (auto-detected)
-   - **Build Command:** `npm run build` (default)
 4. Add environment variable:
    ```
    NEXT_PUBLIC_API_URL=https://YOUR_BACKEND_URL/api
    ```
-   Replace `YOUR_BACKEND_URL` with the Railway URL from Step 3.
 5. Click **Deploy**.
-6. Vercel gives you a URL like `https://happy-pharmacy.vercel.app`.
 
 ### Step 5: Update Backend CORS
 
-After deployment, update the CORS middleware to only allow your Vercel domain instead of `*`. In `back-end/internal/middleware/cors.go`, change the allowed origin to your Vercel URL, or use an environment variable:
-
-```go
-origin := os.Getenv("ALLOWED_ORIGIN")
-if origin == "" {
-    origin = "*"
-}
-```
-
-Then add `ALLOWED_ORIGIN=https://happy-pharmacy.vercel.app` to your Railway variables.
+Add `ALLOWED_ORIGINS=https://happy-pharmacy.vercel.app` to your Railway variables so the backend restricts cross-origin requests to your frontend domain only.
 
 ---
 
 ## Option 2: Vercel + Fly.io (Alternative)
 
-**Estimated cost: $0–3/month — Fly.io has a generous free tier**
+**Estimated cost: $0–3/month**
 
 | Component | Service | Cost |
 |-----------|---------|------|
@@ -121,70 +104,39 @@ Then add `ALLOWED_ORIGIN=https://happy-pharmacy.vercel.app` to your Railway vari
 | Backend API | Fly.io | Free (up to 3 shared VMs) |
 | PostgreSQL | Fly.io Postgres | Free (1GB, single node) |
 
-### Step 1: Install Fly CLI
+### Step 1: Install Fly CLI & Deploy Database
 
 ```bash
 curl -L https://fly.io/install.sh | sh
 fly auth login
-```
-
-### Step 2: Deploy PostgreSQL
-
-```bash
 fly postgres create --name happy-pharmacy-db --region sgp --initial-cluster-size 1 --vm-size shared-cpu-1x --volume-size 1
 ```
 
-Note the connection string from the output.
+### Step 2: Deploy the Backend
 
-### Step 3: Create a Dockerfile for the Backend
-
-Create `back-end/Dockerfile`:
-
-```dockerfile
-FROM golang:1.22-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /api cmd/api/main.go
-
-FROM alpine:3.19
-RUN apk --no-cache add ca-certificates
-COPY --from=builder /api /api
-EXPOSE 8080
-CMD ["/api"]
-```
-
-### Step 4: Deploy the Backend
+The repo includes a Dockerfile at `back-end/Dockerfile`.
 
 ```bash
 cd back-end
 fly launch --name happy-pharmacy-api --region sgp --no-deploy
-```
 
-Set secrets:
-```bash
 fly secrets set \
   DB_HOST=<from postgres create output> \
   DB_PORT=5432 \
   DB_USER=postgres \
   DB_PASSWORD=<password> \
   DB_NAME=happy_pharmacy \
+  DB_SSLMODE=require \
   JWT_SECRET=$(openssl rand -hex 32) \
-  GIN_MODE=release
-```
+  ADMIN_DEFAULT_PASSWORD=$(openssl rand -base64 16) \
+  GIN_MODE=release \
+  ALLOWED_ORIGINS=https://happy-pharmacy.vercel.app
 
-Attach the database:
-```bash
 fly postgres attach happy-pharmacy-db --app happy-pharmacy-api
-```
-
-Deploy:
-```bash
 fly deploy
 ```
 
-### Step 5: Frontend on Vercel
+### Step 3: Frontend on Vercel
 
 Same as Option 1, Step 4. Set `NEXT_PUBLIC_API_URL` to your Fly.io URL.
 
@@ -192,62 +144,45 @@ Same as Option 1, Step 4. Set `NEXT_PUBLIC_API_URL` to your Fly.io URL.
 
 ## Option 3: Single VPS (Full Control)
 
-**Estimated cost: $4–6/month — good for learning and full control**
+**Estimated cost: $4–6/month**
 
-Suitable providers: **Hetzner** ($4/mo), **DigitalOcean** ($6/mo), **Vultr** ($5/mo), or **Linode** ($5/mo). Choose a Singapore or nearby region for Vietnam latency.
+Providers: **Hetzner** ($4/mo), **DigitalOcean** ($6/mo), **Vultr** ($5/mo). Choose Singapore region for Vietnam latency.
 
-### Step 1: Provision a VPS
-
-- Ubuntu 22.04 LTS
-- 1 vCPU, 1GB RAM, 25GB SSD (cheapest tier)
-- Region: Singapore (sgp) for low latency to Vietnam
-
-### Step 2: Initial Server Setup
+### Step 1: Provision & Setup
 
 ```bash
-# SSH into your server
 ssh root@YOUR_SERVER_IP
 
-# Update and install essentials
 apt update && apt upgrade -y
 apt install -y curl git ufw nginx certbot python3-certbot-nginx
 
-# Set up firewall
+# Firewall
 ufw allow OpenSSH
 ufw allow 'Nginx Full'
 ufw enable
 
-# Install Docker
+# Docker
 curl -fsSL https://get.docker.com | sh
-
-# Install Docker Compose
 apt install -y docker-compose-plugin
-```
 
-### Step 3: Install Go and Node.js
+# Node.js
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install 20
 
-```bash
 # Go
 wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
 tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
-
-# Node.js (via nvm)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-source ~/.bashrc
-nvm install 20
 ```
 
-### Step 4: Clone and Configure
+### Step 2: Clone, Configure & Build
 
 ```bash
 cd /opt
 git clone https://github.com/YOUR_USERNAME/happy-pharmacy.git
 cd happy-pharmacy
-
-# Start PostgreSQL
-docker compose up -d
 
 # Create production .env
 cat > .env << 'EOF'
@@ -255,26 +190,30 @@ PORT=8080
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
-DB_PASSWORD=<STRONG_PASSWORD_HERE>
+DB_PASSWORD=<STRONG_PASSWORD>
 DB_NAME=happy_pharmacy
+DB_SSLMODE=disable
 JWT_SECRET=<RANDOM_64_CHAR_STRING>
+ADMIN_DEFAULT_PASSWORD=<STRONG_ADMIN_PASSWORD>
 GIN_MODE=release
+ALLOWED_ORIGINS=https://YOUR_DOMAIN
 EOF
+
+# Start PostgreSQL
+docker compose up -d
+
+# Build backend
+cd back-end && go build -o bin/api cmd/api/main.go
 ```
 
-### Step 5: Build and Run Backend
+### Step 3: Systemd Service
 
-```bash
-cd /opt/happy-pharmacy/back-end
-go build -o bin/api cmd/api/main.go
-```
-
-Create a systemd service (`/etc/systemd/system/happy-pharmacy-api.service`):
+Create `/etc/systemd/system/happy-pharmacy-api.service`:
 
 ```ini
 [Unit]
 Description=Happy Pharmacy API
-After=network.target postgresql.service
+After=network.target docker.service
 
 [Service]
 Type=simple
@@ -291,23 +230,20 @@ WantedBy=multi-user.target
 
 ```bash
 systemctl daemon-reload
-systemctl enable happy-pharmacy-api
-systemctl start happy-pharmacy-api
+systemctl enable --now happy-pharmacy-api
 ```
 
-### Step 6: Build Frontend
+### Step 4: Frontend & Nginx
 
 ```bash
 cd /opt/happy-pharmacy/front-end/pharmacy-ui
-npm install
-
-# Set the API URL for production
+npm ci
 echo "NEXT_PUBLIC_API_URL=https://YOUR_DOMAIN/api" > .env.local
-
 npm run build
+npm install -g pm2
+pm2 start npm --name "happy-pharmacy-ui" -- start
+pm2 startup && pm2 save
 ```
-
-### Step 7: Configure Nginx
 
 Create `/etc/nginx/sites-available/happy-pharmacy`:
 
@@ -316,7 +252,7 @@ server {
     listen 80;
     server_name YOUR_DOMAIN;
 
-    # Frontend (Next.js)
+    # Frontend
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
@@ -324,6 +260,8 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
     }
 
@@ -335,7 +273,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 10M;  # For prescription uploads
+        client_max_body_size 10M;
     }
 
     # Uploaded files
@@ -352,98 +290,87 @@ server {
 
 ```bash
 ln -s /etc/nginx/sites-available/happy-pharmacy /etc/nginx/sites-enabled/
-rm /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
-```
-
-### Step 8: SSL with Let's Encrypt
-
-```bash
 certbot --nginx -d YOUR_DOMAIN
-```
-
-### Step 9: Start Frontend with PM2
-
-```bash
-npm install -g pm2
-cd /opt/happy-pharmacy/front-end/pharmacy-ui
-pm2 start npm --name "happy-pharmacy-ui" -- start
-pm2 startup
-pm2 save
 ```
 
 ---
 
 ## Environment Variables Reference
 
-### Backend (`back-end/.env`)
+### Backend
 
-| Variable | Description | Example | Required |
+| Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `PORT` | API server port | `8080` | Yes |
-| `DB_HOST` | PostgreSQL host | `localhost` | Yes |
-| `DB_PORT` | PostgreSQL port | `5432` | Yes |
-| `DB_USER` | Database user | `postgres` | Yes |
-| `DB_PASSWORD` | Database password | `password` | Yes |
-| `DB_NAME` | Database name | `happy_pharmacy` | Yes |
-| `JWT_SECRET` | Secret for signing JWT tokens | `(64-char random string)` | Yes |
-| `GIN_MODE` | Gin framework mode | `release` | Production |
-| `ALLOWED_ORIGIN` | CORS allowed origin | `https://your-domain.com` | Production |
-| `CLAUDE_API_KEY` | Anthropic API key (for AI features) | `sk-ant-...` | Optional |
+| `PORT` | API server port | `8080` | No |
+| `DB_HOST` | PostgreSQL host | — | Yes |
+| `DB_PORT` | PostgreSQL port | — | Yes |
+| `DB_USER` | Database user | — | Yes |
+| `DB_PASSWORD` | Database password | — | Yes |
+| `DB_NAME` | Database name | — | Yes |
+| `DB_SSLMODE` | PostgreSQL SSL mode | `disable` | Production: `require` |
+| `JWT_SECRET` | Secret for signing JWT tokens | dev fallback | Yes |
+| `GIN_MODE` | Gin framework mode | `debug` | Production: `release` |
+| `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated) | `*` (all) | Production: your domain |
+| `ADMIN_DEFAULT_PASSWORD` | Initial admin account password | `admin123` | Production: strong password |
+| `CLAUDE_API_KEY` | Anthropic API key (AI features) | — | Optional |
 
-### Frontend (`front-end/pharmacy-ui/.env.local`)
+Generate secure values:
+```bash
+# JWT secret
+openssl rand -hex 32
 
-| Variable | Description | Example | Required |
-|----------|-------------|---------|----------|
-| `NEXT_PUBLIC_API_URL` | Backend API base URL | `https://api.yourdomain.com/api` | Yes |
+# Admin password
+openssl rand -base64 16
+```
+
+### Frontend
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NEXT_PUBLIC_API_URL` | Backend API base URL | `https://api.yourdomain.com/api` |
 
 ---
 
-## Pre-Deployment Checklist
+## CI/CD Pipeline
 
-Before going to production, address these items:
+### GitHub Actions Workflows
 
-### Security
-- [ ] Change `JWT_SECRET` to a strong random value (not the dev default)
-- [ ] Change default admin password (`admin123`) after first login
-- [ ] Change PostgreSQL password from `password` to something strong
-- [ ] Restrict CORS to your actual frontend domain (not `*`)
-- [ ] Enable HTTPS (SSL/TLS) on all endpoints
-- [ ] Remove or protect the default admin seed in production
-- [ ] Set `GIN_MODE=release` to disable debug output
-
-### Database
-- [ ] Set up automated PostgreSQL backups (Railway and Fly.io do this automatically)
-- [ ] If using VPS: configure `pg_dump` cron job for daily backups
-
-### Application
-- [ ] Set `NEXT_PUBLIC_API_URL` to the production backend URL
-- [ ] Verify all 74 API tests pass against the production backend
-- [ ] Test the full customer flow: register > browse > cart > checkout > order
-- [ ] Test admin flow: login > dashboard > manage products > review prescription
-
-### Infrastructure
-- [ ] Set up health check monitoring (e.g., UptimeRobot — free tier)
-- [ ] Configure log aggregation (Railway and Fly.io have built-in logs)
-
----
-
-## CI/CD with GitHub Actions
-
-Create `.github/workflows/ci.yml`:
+Create `.github/workflows/ci.yml` — runs on every push and PR:
 
 ```yaml
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
 jobs:
-  test-backend:
+  # ─── Backend: Build & Test ─────────────────────────
+  backend-build:
+    name: Backend Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: back-end
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: back-end/go.sum
+      - name: Build
+        run: go build -v ./...
+      - name: Vet
+        run: go vet ./...
+
+  backend-test:
+    name: Backend Integration Tests
+    runs-on: ubuntu-latest
+    needs: backend-build
     services:
       postgres:
         image: postgres:15-alpine
@@ -458,31 +385,40 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - name: Build backend
-        run: cd back-end && go build ./...
-      - name: Start backend and run tests
+          cache-dependency-path: back-end/go.sum
+      - name: Start backend
         env:
           DB_HOST: localhost
           DB_PORT: 5432
           DB_USER: postgres
           DB_PASSWORD: testpassword
           DB_NAME: happy_pharmacy_test
-          JWT_SECRET: ci-test-secret
+          JWT_SECRET: ci-test-secret-do-not-use-in-prod
           PORT: 8080
+          GIN_MODE: test
         run: |
           cd back-end
           go run cmd/api/main.go &
-          sleep 5
-          bash test_api.sh
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8080/health && break
+            sleep 1
+          done
+      - name: Run API tests
+        run: cd back-end && bash test_api.sh
 
-  build-frontend:
+  # ─── Frontend: Lint & Build ─────────────────────────
+  frontend-build:
+    name: Frontend Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front-end/pharmacy-ui
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -491,44 +427,140 @@ jobs:
           cache: 'npm'
           cache-dependency-path: front-end/pharmacy-ui/package-lock.json
       - name: Install dependencies
-        run: cd front-end/pharmacy-ui && npm ci
+        run: npm ci
+      - name: Lint
+        run: npm run lint
       - name: Build
-        run: cd front-end/pharmacy-ui && npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://placeholder.example.com/api
+        run: npm run build
+
+  # ─── Docker: Build Image ───────────────────────────
+  docker-build:
+    name: Docker Build (Backend)
+    runs-on: ubuntu-latest
+    needs: backend-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t happy-pharmacy-api back-end/
 ```
 
-Railway and Vercel both auto-deploy on push to `main`, so the CI/CD pipeline is:
+### Deploy Workflow (on merge to main)
 
-1. Push to GitHub
-2. GitHub Actions runs tests and build checks
-3. If tests pass, Railway auto-deploys backend
-4. Vercel auto-deploys frontend
+Create `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent deployments
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  # Run CI first
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Deploy backend to Railway (auto-deploys on push, this is a gate)
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Railway deploy
+        run: |
+          echo "Railway auto-deploys from main branch."
+          echo "CI passed — Railway deployment will proceed."
+          # If using Railway deploy hook:
+          # curl -X POST "${{ secrets.RAILWAY_DEPLOY_HOOK }}"
+
+  # Vercel auto-deploys, but we can add a check
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Verify deployment
+        run: |
+          echo "Vercel auto-deploys from main branch."
+          echo "CI passed — Vercel deployment will proceed."
+```
+
+### Branch Strategy
+
+```
+main (production)
+ └── develop (staging)
+      └── feature/* (feature branches)
+```
+
+- **feature branches** → PR to `develop` → CI runs → merge
+- **develop** → PR to `main` → CI runs → merge triggers deploy
+- **hotfix branches** → PR directly to `main` for urgent fixes
+
+### Setting Up Auto-Deploy
+
+**Railway:**
+1. In Railway project settings, connect your GitHub repo
+2. Set auto-deploy branch to `main`
+3. Optionally add a deploy webhook URL to `RAILWAY_DEPLOY_HOOK` GitHub secret
+
+**Vercel:**
+1. Vercel auto-deploys on push to `main` by default
+2. Preview deployments are created for every PR
+
+---
+
+## Pre-Deployment Security Checklist
+
+### Critical (must do before going live)
+
+- [ ] Set `JWT_SECRET` to a cryptographically random 64-char string
+- [ ] Set `ADMIN_DEFAULT_PASSWORD` to a strong password (then change via UI)
+- [ ] Set `DB_PASSWORD` to a strong password
+- [ ] Set `ALLOWED_ORIGINS` to your actual frontend domain(s)
+- [ ] Set `GIN_MODE=release` to disable debug output
+- [ ] Set `DB_SSLMODE=require` if database is remote
+- [ ] Enable HTTPS on all endpoints (Vercel/Railway do this automatically)
+- [ ] Remove or rotate the default admin password after first login
+
+### Recommended
+
+- [ ] Set up automated PostgreSQL backups
+- [ ] Configure health check monitoring (UptimeRobot free tier)
+- [ ] Review and test the complete user flow end-to-end
+- [ ] Run `bash test_api.sh` against production URL
 
 ---
 
 ## Post-Deployment Verification
 
-After deploying, run through this checklist:
-
 ```bash
-# 1. Health check
+# 1. Health check (should return {"status":"Healthy"})
 curl https://YOUR_BACKEND_URL/health
 
-# 2. Run the test suite against production
+# 2. Run the API test suite against production
 cd back-end
-./test_api.sh https://YOUR_BACKEND_URL
+API_BASE=https://YOUR_BACKEND_URL/api bash test_api.sh
 
-# 3. Check frontend loads
+# 3. Frontend loads (should return 200)
 curl -s -o /dev/null -w "%{http_code}" https://YOUR_FRONTEND_URL
-# Should return 200
 ```
 
-Then manually verify:
-1. Open the frontend URL in a browser
-2. Register a new customer account
-3. Browse medicines and search for "Paracetamol"
-4. Add items to cart and complete checkout
-5. Log in as admin (`admin@happypharmacy.com`) and check the dashboard
-6. Update an order status and verify it reflects for the customer
+Manual checks:
+1. Register a new customer account
+2. Browse medicines and search for "Paracetamol"
+3. Add items to cart and complete checkout
+4. Log in as admin and check the dashboard
+5. Update an order status and verify it reflects for the customer
 
 ---
 
@@ -536,43 +568,38 @@ Then manually verify:
 
 ### Free Monitoring
 
-- **[UptimeRobot](https://uptimerobot.com/)** — Free tier monitors up to 50 URLs every 5 minutes. Set up checks for:
+- **[UptimeRobot](https://uptimerobot.com/)** — monitors up to 50 URLs every 5 minutes (free). Set up:
   - `https://YOUR_BACKEND_URL/health`
   - `https://YOUR_FRONTEND_URL`
-- **Railway Logs** — Built-in log viewer in the Railway dashboard
-- **Vercel Analytics** — Built-in page-level analytics (free on Hobby plan)
+- **Railway/Vercel Logs** — built-in log viewer in their dashboards
+- **Vercel Analytics** — built-in page-level analytics (free on Hobby plan)
 
 ### Database Backups
 
-**Railway:** Automatic daily backups included.
+**Railway/Fly.io:** Automatic daily backups included.
 
-**VPS (manual):** Add a cron job:
+**VPS:** Add a cron job:
 ```bash
 # /etc/cron.d/pharmacy-backup
 0 3 * * * root pg_dump -U postgres happy_pharmacy | gzip > /backups/pharmacy_$(date +\%Y\%m\%d).sql.gz
+# Keep last 14 days
+0 4 * * * root find /backups -name "pharmacy_*.sql.gz" -mtime +14 -delete
 ```
 
 ### Updating the Application
 
 ```bash
-# Push changes to GitHub
+# 1. Push changes to GitHub
 git push origin main
 
-# Railway and Vercel auto-deploy from main branch
-# Monitor deployment in their respective dashboards
-```
+# 2. CI runs automatically
+# 3. Railway and Vercel auto-deploy on success
 
-For the VPS option:
-```bash
-cd /opt/happy-pharmacy
-git pull origin main
-
-# Rebuild backend
+# For VPS:
+cd /opt/happy-pharmacy && git pull origin main
 cd back-end && go build -o bin/api cmd/api/main.go
 systemctl restart happy-pharmacy-api
-
-# Rebuild frontend
-cd ../front-end/pharmacy-ui && npm run build
+cd ../front-end/pharmacy-ui && npm ci && npm run build
 pm2 restart happy-pharmacy-ui
 ```
 
@@ -584,18 +611,17 @@ When you outgrow the initial setup:
 
 | Need | Solution | Cost |
 |------|----------|------|
-| More backend capacity | Railway Pro plan or multiple Fly.io instances | $20/mo |
-| Larger database | Railway Pro or managed Postgres (Supabase, Neon) | $25/mo |
+| More backend capacity | Railway Pro or multiple Fly.io instances | $20/mo |
+| Larger database | Managed Postgres (Supabase, Neon) | $25/mo |
 | File storage (prescriptions) | AWS S3 or Cloudflare R2 (10GB free) | $0–5/mo |
 | CDN for images | Cloudflare (free tier) | Free |
-| Email notifications | Resend (100 emails/day free) or SendGrid | Free–$15/mo |
-| Real payments | Stripe / VNPAY / MoMo integration | Per-transaction fees |
-| Mobile app | React Native sharing the same Go API | Dev time only |
-| Custom domain | Buy from Namecheap/Cloudflare | ~$10/year |
+| Email notifications | Resend (100/day free) or SendGrid | Free–$15/mo |
+| Real payments | Stripe / VNPAY / MoMo | Per-transaction |
+| Custom domain | Namecheap / Cloudflare | ~$10/year |
 
 ### Recommended Growth Path
 
-1. **Demo phase** (now): Vercel + Railway free trial = $0/mo
+1. **Demo** (now): Vercel + Railway free trial = $0/mo
 2. **Soft launch**: Vercel free + Railway Hobby = $5/mo + custom domain ($10/yr)
 3. **Production**: Vercel Pro + Railway Pro + R2 storage = ~$40/mo
-4. **Scale**: Add CDN, email, real payments, mobile app as needed
+4. **Scale**: Add CDN, email, payments, mobile app as needed

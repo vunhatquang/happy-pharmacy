@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../lib/auth-context";
@@ -11,6 +11,7 @@ const navItems = [
   { href: "/admin/orders", label: "Đơn hàng", icon: "📦" },
   { href: "/admin/prescriptions", label: "Đơn thuốc", icon: "📋" },
   { href: "/admin/inventory", label: "Kho hàng", icon: "🏬" },
+  { href: "/admin/pharmacists", label: "Dược sĩ", icon: "🩺" },
   { href: "/admin/analytics", label: "Thống kê", icon: "📈" },
 ];
 
@@ -18,13 +19,15 @@ export default function AdminLayout({ children, title }: { children: React.React
   const router = useRouter();
   const pathname = usePathname();
   const { user, isAdmin, isLoggedIn, logout } = useAuth();
-  const [ready, setReady] = useState(false);
 
+  // The effect only performs the redirect; readiness is derived from auth state
+  // so there is no state to synchronise (and no cascading render).
   useEffect(() => {
     if (!isLoggedIn) { router.push("/login"); return; }
-    if (!isAdmin) { router.push("/"); return; }
-    setReady(true);
+    if (!isAdmin) router.push("/");
   }, [isLoggedIn, isAdmin, router]);
+
+  const ready = isLoggedIn && isAdmin;
 
   if (!ready) {
     return (

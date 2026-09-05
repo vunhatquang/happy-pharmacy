@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatVND, type Order } from "../../../lib/api";
 import AdminLayout from "../../../components/AdminLayout";
 
@@ -13,14 +13,26 @@ export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
 
-  useEffect(() => {
-    loadOrders();
+  // Fetches without touching `loading` — the initial state is already true, so
+  // the mount effect has no state to set synchronously.
+  const fetchOrders = useCallback(async (status?: string) => {
+    try {
+      const d = await api.adminGetOrders(status);
+      setOrders(d.data || []);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const loadOrders = (status?: string) => {
+  // Manual reloads (filter clicks, post-update refresh) show the spinner again.
+  const loadOrders = useCallback((status?: string) => {
     setLoading(true);
-    api.adminGetOrders(status).then(d => setOrders(d.data || [])).finally(() => setLoading(false));
-  };
+    fetchOrders(status);
+  }, [fetchOrders]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
 
   const handleStatusChange = async (orderId: string, newStatus: string) => {
     await api.adminUpdateOrder(orderId, { status: newStatus });

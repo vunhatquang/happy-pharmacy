@@ -170,6 +170,99 @@ class ApiClient {
     });
   }
 
+  // Video Consultations — customer side
+  getConsultationAvailability() {
+    return this.request<{ data: ConsultationAvailability }>('/consultations/availability');
+  }
+
+  joinConsultationQueue(topic: string) {
+    return this.request<{ data: Consultation }>('/consultations', {
+      method: 'POST',
+      body: { topic },
+    });
+  }
+
+  getActiveConsultation() {
+    return this.request<{ data: Consultation | null; queue_position: number }>('/consultations/active');
+  }
+
+  getMyConsultations() {
+    return this.request<{ data: Consultation[] }>('/consultations');
+  }
+
+  leaveConsultationQueue(id: string) {
+    return this.request(`/consultations/${id}`, { method: 'DELETE' });
+  }
+
+  // Video Consultations — pharmacist side
+  pharmacistGetProfile() {
+    return this.request<{ data: PharmacistProfile }>('/pharmacist/me');
+  }
+
+  pharmacistSetStatus(status: 'available' | 'offline') {
+    return this.request<{ data: PharmacistProfile }>('/pharmacist/status', {
+      method: 'PUT',
+      body: { status },
+    });
+  }
+
+  pharmacistGetQueue() {
+    return this.request<{ data: Consultation[]; count: number }>('/pharmacist/queue');
+  }
+
+  pharmacistClaimNext() {
+    return this.request<{ data: Consultation }>('/pharmacist/consultations/next', { method: 'POST' });
+  }
+
+  pharmacistGetActive() {
+    return this.request<{ data: Consultation | null }>('/pharmacist/consultations/active');
+  }
+
+  pharmacistGetHistory() {
+    return this.request<{ data: Consultation[] }>('/pharmacist/consultations');
+  }
+
+  pharmacistRecommend(consultationId: string, data: { medicine_id: string; quantity: number; note?: string }) {
+    return this.request<{ data: ConsultationRecommendation }>(
+      `/pharmacist/consultations/${consultationId}/recommend`,
+      { method: 'POST', body: data }
+    );
+  }
+
+  pharmacistComplete(consultationId: string, notes?: string) {
+    return this.request(`/pharmacist/consultations/${consultationId}/complete`, {
+      method: 'PUT',
+      body: { notes: notes || '' },
+    });
+  }
+
+  // Admin — pharmacists & consultations
+  adminGetPharmacists() {
+    return this.request<{ data: PharmacistProfile[]; count: number }>('/admin/pharmacists');
+  }
+
+  adminCreatePharmacist(data: {
+    full_name: string;
+    email: string;
+    phone?: string;
+    password: string;
+    license_number: string;
+    specialization?: string;
+    bio?: string;
+    years_experience?: number;
+  }) {
+    return this.request<{ data: PharmacistProfile }>('/admin/pharmacists', { method: 'POST', body: data });
+  }
+
+  adminUpdatePharmacist(id: string, data: Partial<PharmacistProfile>) {
+    return this.request(`/admin/pharmacists/${id}`, { method: 'PUT', body: data });
+  }
+
+  adminGetConsultations(status?: string) {
+    const params = status ? `?status=${status}` : '';
+    return this.request<{ data: Consultation[]; count: number }>(`/admin/consultations${params}`);
+  }
+
   // Admin
   adminGetStats() {
     return this.request('/admin/stats');
@@ -335,6 +428,53 @@ export interface Subscription {
   is_active: boolean;
   medicine: Medicine;
   address: Address;
+}
+
+export interface PharmacistProfile {
+  id: string;
+  user_id: string;
+  license_number: string;
+  specialization: string;
+  bio: string;
+  years_experience: number;
+  status: 'offline' | 'available' | 'in_call';
+  last_active_at?: string;
+  user?: User;
+  created_at: string;
+}
+
+export interface ConsultationRecommendation {
+  id: string;
+  consultation_id: string;
+  medicine_id: string;
+  quantity: number;
+  note: string;
+  medicine?: Medicine;
+  created_at: string;
+}
+
+export interface Consultation {
+  id: string;
+  customer_id: string;
+  pharmacist_id?: string;
+  status: 'waiting' | 'active' | 'completed' | 'cancelled';
+  topic: string;
+  room_name: string;
+  pharmacist_notes: string;
+  started_at?: string;
+  ended_at?: string;
+  customer?: User;
+  pharmacist?: User;
+  recommendations?: ConsultationRecommendation[];
+  created_at: string;
+}
+
+export interface ConsultationAvailability {
+  pharmacists_available: number;
+  pharmacists_on_duty: number;
+  queue_length: number;
+  estimated_wait_minutes: number;
+  is_open: boolean;
 }
 
 // Helper to format VND currency
